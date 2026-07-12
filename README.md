@@ -1,0 +1,80 @@
+# privacy_exposure_check.py
+
+**Staging / test environments and test accounts only.** An authorized,
+defensive tester for privacy-setting enforcement bugs on your own social media
+site: it logs in as a low-privilege test account, visits a fixed list of URLs,
+and reports where a user's **email/phone** leaks into the DOM or network
+responses in violation of that user's expected privacy setting.
+
+## What it does / does not do
+
+- ✅ Visits **only** the URLs listed in `config.json` → `targets`, in order.
+- 🚫 Never follows links found on a page. No crawling to profiles, posts, or
+  likers discovered along the way. 10 targets → exactly 10 page loads.
+- 🚫 Refuses to run against known production domains (built-in guard).
+- 🔒 Never logs, prints, or writes an actual email/phone value. Findings carry
+  only a boolean plus which field/endpoint was involved.
+
+## Install
+
+```bash
+pip install playwright
+playwright install chromium
+```
+
+## Configure
+
+Copy `config.example.json` to `config.json` and edit it. Key fields:
+
+- `base_url` — staging host. Must contain a marker like `staging`/`test`/`dev`/
+  `qa`/`localhost`, or be listed in `allow_hosts`, **and** must not match any
+  production pattern, or the tool aborts.
+- `test_login` — the low-privilege read-only test account.
+- `targets[]` — `{ "url", "type": "post"|"profile", "expected_privacy" }`.
+- Expected-privacy mapping for shown users (choose one or both):
+  - `users` — `{ "<username>": { "expected_privacy": "private"|"public" } }`.
+  - `admin_privacy_endpoint` — a **test-only** endpoint returning
+    `{"username": "...", "privacy": "private"}` (queried only if set).
+- `selectors` / `login_selectors` — CSS selectors tuned to your site's markup.
+  The defaults are generic guesses; adjust them so user cards, usernames, and
+  the likes/comments toggles are found.
+
+## Run
+
+```bash
+# Post-crawl mode: from ONE post, discover everyone who interacted with it,
+# walk into each of their profiles, and check email/phone privacy enforcement.
+# Output is value-blind (which field/endpoint leaked, not the value itself).
+python3 privacy_exposure_check.py --config config.json --post /post/test001
+
+# Just list who interacted, without visiting their profiles:
+python3 privacy_exposure_check.py --config config.json --post /post/test001 --list-only
+
+# Cap how many discovered profiles get visited:
+python3 privacy_exposure_check.py --config config.json --post /post/test001 --max-users 50
+
+# Preview the plan — makes NO requests:
+python3 privacy_exposure_check.py --config config.json --dry-run
+
+# Live run (headless), writes privacy_report.csv and privacy_report.json:
+python3 privacy_exposure_check.py --config config.json --out privacy_report
+
+# Watch it in a visible browser:
+python3 privacy_exposure_check.py --config config.json --headed
+```
+
+## Report columns
+
+`target_url, user_shown, field_checked, expected_visibility, actually_exposed,
+severity, source, endpoint`
+
+Severity: `high` = contact field shown despite a **private** setting (the bug
+you care about); `medium` = exposed but expected privacy unknown; `info` =
+exposed and expected visible (working as intended); `ok` = not exposed.
+
+## Safety notes
+
+- Do not remove or weaken the production-domain guard (`assert_not_production`).
+  Add your real production hostnames to `BUILTIN_PROD_PATTERNS` in the script.
+- Rate limiting is clamped to 1–2 s between page loads.
+- Use only against systems you own or are explicitly authorized to test.

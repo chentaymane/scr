@@ -1,0 +1,39 @@
+{
+  "base_url": "https://staging.mysite.com",
+  "login_path": "/login",
+  "test_login": {
+    "username": "test_bot_readonly",
+    "password": "REPLACE_WITH_TEST_ACCOUNT_PASSWORD"
+  },
+
+  "rate_limit_seconds": 1.5,
+  "settle_seconds": 0.8,
+  "max_response_bytes": 2000000,
+
+  "allow_hosts": [],
+  "production_domain_patterns": [],
+
+  "admin_privacy_endpoint": "/__test__/admin/user_privacy",
+  "users": {
+    "test_private_01": { "expected_privacy": "private" },
+    "test_public_02":  { "expected_privacy": "public" }
+  },
+
+  "login_selectors": {
+    "username": "input[name='username'], input[name='email'], #username",
+    "password": "input[type='password'], input[name='password'], #password",
+    "submit":   "button[type='submit'], input[type='submit']"
+  },
+
+  "selectors": {
+    "user_card": "[data-testid='user'], .user-card, li.user, .liker, .comment",
+    "username":  "[data-username], .username, .handle",
+    "likes_toggle":    ["[data-testid='likes']", ".likes-count", "button.likes", "a.likers"],
+    "comments_toggle": ["[data-testid='comments']", ".comments-toggle", "button.comments"]
+  },
+
+  "targets": [
+    { "url": "/post/test001",           "type": "post",    "expected_privacy": "public"  },
+    { "url": "/profile/test_private_01", "type": "profile", "expected_privacy": "private" }
+  ]
+}
