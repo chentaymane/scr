@@ -384,8 +384,14 @@ def do_login(page, cfg: dict, base_url: str, settle: float) -> None:
     if not username or not password:
         print("[warn] no test_login credentials in config; continuing unauthenticated")
         return
-    url = urljoin(base_url, login_path)
-    page.goto(url, wait_until="domcontentloaded")
+    url = urljoin(base_url + "/", login_path.lstrip("/"))
+    try:
+        page.goto(url, wait_until="domcontentloaded")
+    except Exception as e:
+        print(f"[warn] could not reach login page {url}: {e}")
+        print("[warn] check base_url in config.json points at a reachable staging host; "
+              "continuing (session may be unauthenticated)")
+        return
     page.wait_for_timeout(int(settle * 1000))
 
     sel = cfg.get("login_selectors", {})
@@ -487,7 +493,12 @@ def run_post_crawl(cfg: dict, base_url: str, post_url: str, args) -> list[Findin
         # 1) Load the post and discover interactors.
         print(f"[post] loading {full_post}")
         capture.clear()
-        page.goto(full_post, wait_until="domcontentloaded")
+        try:
+            page.goto(full_post, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"[abort] could not load post {full_post}: {e}")
+            context.close(); browser.close()
+            return findings
         page.wait_for_timeout(int(settle * 1000))
         interactors = discover_interactors(page, cfg, base_url, settle)
 
@@ -744,21 +755,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Privacy-setting enforcement tester (STAGING/TEST ONLY).",
     )
+    parser.add_argument("url", nargs="?", default=None,
+                        help="a single post URL or /path to test. If given, runs post-crawl "
+                             "mode directly. If omitted (and no --targets-file), you'll be "
+                             "prompted for one.")
     parser.add_argument("-c", "--config", default="config.json", type=Path,
                         help="path to config.json (default: config.json)")
     parser.add_argument("-o", "--out", default="privacy_report", type=Path,
                         help="output report basename (writes .csv and .json)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="print the target list and planned checks; make NO requests")
+                        help="print the plan; make NO requests")
     parser.add_argument("--headed", action="store_true",
                         help="run the browser headed (default: headless)")
     parser.add_argument("--post", metavar="URL",
-                        help="post-crawl mode: discover everyone who interacted with this "
-                             "single post, then check each of their profiles (value-blind)")
+                        help="explicit post-crawl seed (same as passing the URL positionally)")
+    parser.add_argument("--targets-file", action="store_true",
+                        help="ignore the single-URL flow and use the config.json 'targets' list instead")
     parser.add_argument("--max-users", type=int, default=None,
-                        help="cap on discovered users to visit in --post mode (default: config.max_users or 200)")
+                        help="cap on discovered users to visit in post mode (default: config.max_users or 200)")
     parser.add_argument("--list-only", action="store_true",
-                        help="in --post mode: discover and print interacting users, then stop "
+                        help="post mode: discover and print interacting users, then stop "
                              "before visiting their profiles")
     args = parser.parse_args(argv)
 
@@ -768,17 +784,35 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Safety guard runs for BOTH dry-run and live so misconfig is caught early.
     assert_not_production(base_url, cfg)
 
-    if args.post:
+    # --- Single-URL post-crawl is the default, simplest flow ---
+    if not args.targets_file:
+        post_url = args.post or args.url
+        if not post_url and not args.dry_run:
+            try:
+                post_url = input("Enter a post URL (or /path) to test: ").strip()
+            except EOFError:
+                post_url = ""
+        if not post_url:
+            if args.dry_run:
+                print("[dry-run] no URL supplied; nothing planned. "
+                      "Pass a post URL or use --targets-file.")
+                return 0
+            sys.exit("[abort] no post URL given.")
+
+        # If an absolute URL was passed, guard ITS host too (not just config base_url).
+        if urlparse(post_url).scheme:
+            assert_not_production(post_url, cfg)
+
         if args.dry_run:
             print("=== DRY RUN — no requests will be made ===")
             print(f"base_url: {base_url}")
-            print(f"post-crawl seed: {urljoin(base_url, args.post)}")
+            print(f"post-crawl seed: {urljoin(base_url + '/', post_url)}")
             print("plan: log in -> open likes+comments -> discover interacting users -> "
                   "visit each profile -> check email/phone exposure vs privacy setting")
             print("output is value-blind: which field/endpoint was exposed, never the value.")
             print("=== end dry run ===")
             return 0
-        findings = run_post_crawl(cfg, base_url, args.post, args)
+        findings = run_post_crawl(cfg, base_url, post_url, args)
         write_reports(findings, args.out)
         return 0
 

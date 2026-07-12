@@ -42,19 +42,28 @@ Copy `config.example.json` to `config.json` and edit it. Key fields:
 ## Run
 
 ```bash
-# Post-crawl mode: from ONE post, discover everyone who interacted with it,
-# walk into each of their profiles, and check email/phone privacy enforcement.
+# Simplest: just give it one post URL. It discovers everyone who interacted with
+# that post, walks into each profile, and checks email/phone privacy enforcement.
 # Output is value-blind (which field/endpoint leaked, not the value itself).
-python3 privacy_exposure_check.py --config config.json --post /post/test001
+python3 privacy_exposure_check.py https://staging.mysite.com/post/test001
+
+# A /path works too (base_url from config is prepended):
+python3 privacy_exposure_check.py /post/test001
+
+# No URL? It prompts you for one:
+python3 privacy_exposure_check.py
 
 # Just list who interacted, without visiting their profiles:
-python3 privacy_exposure_check.py --config config.json --post /post/test001 --list-only
+python3 privacy_exposure_check.py /post/test001 --list-only
 
 # Cap how many discovered profiles get visited:
-python3 privacy_exposure_check.py --config config.json --post /post/test001 --max-users 50
+python3 privacy_exposure_check.py /post/test001 --max-users 50
 
 # Preview the plan — makes NO requests:
-python3 privacy_exposure_check.py --config config.json --dry-run
+python3 privacy_exposure_check.py /post/test001 --dry-run
+
+# Use the config.json 'targets' list instead of a single URL:
+python3 privacy_exposure_check.py --targets-file
 
 # Live run (headless), writes privacy_report.csv and privacy_report.json:
 python3 privacy_exposure_check.py --config config.json --out privacy_report
