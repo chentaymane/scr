@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Contact Extractor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 420px;
+      min-height: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      padding: 16px;
+      color: white;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .header .site-detected {
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    .controls {
+      padding: 12px 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #2a2a4a;
+    }
+
+    .controls button {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: opacity 0.2s;
+      font-family: inherit;
+    }
+
+    .controls button:hover:not(:disabled) { opacity: 0.85; }
+    .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-secondary {
+      background: #2a2a4a;
+      color: #e0e0e0;
+    }
+
+    .btn-danger {
+      background: #e74c3c;
+      color: white;
+    }
+
+    .settings {
+      padding: 10px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      background: #16162a;
+      border-bottom: 1px solid #2a2a4a;
+    }
+
+    .setting {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .setting label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+    }
+
+    .setting input {
+      width: 100%;
+      padding: 5px 8px;
+      background: #2a2a4a;
+      border: 1px solid #3a3a5a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 12px;
+      font-family: inherit;
+    }
+
+    .setting input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .status-bar {
+      padding: 8px 16px;
+      font-size: 11px;
+      color: #aaa;
+      background: #16162a;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #666;
+      flex-shrink: 0;
+    }
+
+    .status-dot.ready { background: #27ae60; }
+    .status-dot.running { background: #f39c12; animation: pulse 1s infinite; }
+    .status-dot.error { background: #e74c3c; }
+    .status-dot.done { background: #3498db; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .results {
+      max-height: 380px;
+      overflow-y: auto;
+    }
+
+    .results::-webkit-scrollbar { width: 4px; }
+    .results::-webkit-scrollbar-track { background: #1a1a2e; }
+    .results::-webkit-scrollbar-thumb { background: #667eea; border-radius: 4px; }
+
+    .section-header {
+      padding: 8px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      background: #16162a;
+      position: sticky;
+      top: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .section-count {
+      background: #667eea;
+      color: white;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 10px;
+    }
+
+    .contact-card {
+      padding: 10px 16px;
+      border-bottom: 1px solid #1f1f38;
+      transition: background 0.15s;
+    }
+
+    .contact-card:hover {
+      background: #1f1f38;
+    }
+
+    .contact-name {
+      font-weight: 500;
+      color: #e0e0e0;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .contact-name .at {
+      color: #888;
+      font-weight: 400;
+      font-size: 11px;
+    }
+
+    .platform-badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 400;
+      text-transform: uppercase;
+      color: white;
+    }
+
+    .platform-facebook .platform-badge { background: #4267B2; }
+    .platform-instagram .platform-badge { background: #E4405F; }
+    .platform-twitter .platform-badge { background: #1DA1F2; }
+    .platform-pinterest .platform-badge { background: #bd081c; }
+    .platform-quora .platform-badge { background: #b92b27; }
+    .platform-tiktok .platform-badge { background: #010101; }
+    .platform-reddit .platform-badge { background: #ff4500; }
+    .platform-linkedin .platform-badge { background: #0077b5; }
+
+    .contact-links {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .contact-link {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-decoration: none;
+    }
+
+    .contact-link.email {
+      background: rgba(52, 152, 219, 0.2);
+      color: #3498db;
+    }
+
+    .contact-link.phone {
+      background: rgba(39, 174, 96, 0.2);
+      color: #27ae60;
+    }
+
+    .contact-link.profile {
+      background: rgba(102, 126, 234, 0.15);
+      color: #667eea;
+    }
+
+    .footer {
+      padding: 8px 16px;
+      font-size: 10px;
+      color: #444;
+      text-align: center;
+      border-top: 1px solid #1f1f38;
+    }
+
+    .progress-bar {
+      height: 2px;
+      background: #2a2a4a;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .progress-bar .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      padding: 24px 16px;
+      text-align: center;
+    }
+
+    .empty-state p {
+      color: #666;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+
+    .empty-state p + p {
+      margin-bottom: 0;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Social Contact Extractor</h1>
+    <div class="site-detected" id="site-info">Detecting platform…</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-primary" id="btn-scan">
+      <span id="btn-scan-text">Start Scan</span>
+    </button>
+    <button class="btn-secondary" id="btn-export" disabled>Export CSV</button>
+    <button class="btn-danger" id="btn-clear">Clear</button>
+  </div>
+
+  <div class="settings">
+    <div class="setting">
+      <label for="max-likers">Max likers</label>
+      <input type="number" id="max-likers" min="1" max="1000" value="100">
+    </div>
+    <div class="setting">
+      <label for="max-comments">Max comments</label>
+      <input type="number" id="max-comments" min="1" max="2000" value="200">
+    </div>
+    <div class="setting">
+      <label for="max-depth">Reply depth</label>
+      <input type="number" id="max-depth" min="1" max="20" value="5">
+    </div>
+  </div>
+
+  <div class="progress-bar" id="progress-bar" style="display:none">
+    <div class="fill" id="progress-fill"></div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">Idle — open a post and click Start Scan</span>
+  </div>
+
+  <div class="results" id="results-container">
+    <div class="empty-state">
+      <p>No results yet.</p>
+      <p>Navigate to a post on any supported platform, then click Start Scan.</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    For personal privacy auditing only — use responsibly
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
