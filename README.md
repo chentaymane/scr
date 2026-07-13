@@ -72,6 +72,30 @@ python3 privacy_exposure_check.py --config config.json --out privacy_report
 python3 privacy_exposure_check.py --config config.json --headed
 ```
 
+## Reusing a session you're already logged into (no credentials)
+
+Instead of scripting a login with a stored test password, you can reuse a
+browser session where you're already signed in. No password is stored anywhere.
+
+```bash
+# Persistent profile: log in yourself once in the visible window, then continue.
+# The session is saved in ./.pw-profile and reused on later runs — even headless.
+python3 privacy_exposure_check.py /post/test001 \
+    --user-data-dir ./.pw-profile --manual-login
+
+# Later runs reuse that profile with no login step:
+python3 privacy_exposure_check.py /post/test001 --user-data-dir ./.pw-profile
+
+# Or reuse cookies exported from an already-logged-in session (Playwright
+# storage_state JSON):
+python3 privacy_exposure_check.py /post/test001 --storage-state ./session.json
+```
+
+You can also set these under a `session` block in `config.json`
+(`{"session": {"user_data_dir": "./.pw-profile"}}`); CLI flags win over config.
+The production-domain guard still applies — this only changes how you
+authenticate, not where the tool is allowed to run.
+
 ## Report columns
 
 `target_url, user_shown, field_checked, expected_visibility, actually_exposed,

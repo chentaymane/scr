@@ -410,6 +410,81 @@ def do_login(page, cfg: dict, base_url: str, settle: float) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Session handling: reuse an already-logged-in browser session (credential-free)
+# instead of scripting a login with a stored test password.
+# ---------------------------------------------------------------------------
+
+def _session_settings(cfg: dict, args) -> tuple[Optional[str], Optional[str]]:
+    """Resolve session-reuse settings from CLI flags (preferred) or config.session."""
+    sess = cfg.get("session") or {}
+    user_data_dir = getattr(args, "user_data_dir", None) or sess.get("user_data_dir")
+    storage_state = getattr(args, "storage_state", None) or sess.get("storage_state")
+    return user_data_dir, storage_state
+
+
+def open_session(p, cfg: dict, args):
+    """Open a browser and return (context, page, cleanup, reused).
+
+    Session-reuse modes (no credentials stored anywhere) take priority over the
+    config test_login flow:
+      --user-data-dir DIR : a persistent Chrome profile. Log in once yourself in
+                            the visible window (see --manual-login); the session
+                            is reused on later runs, even headless.
+      --storage-state FILE: cookies/localStorage exported from a session where
+                            you were already logged in.
+    When neither is set, falls back to the credentialed login in authenticate().
+    'reused' is True when a pre-authenticated session was loaded.
+    """
+    user_data_dir, storage_state = _session_settings(cfg, args)
+
+    if user_data_dir:
+        # Persistent profile: headed if manual-login so you can sign in by hand.
+        headless = not args.headed and not getattr(args, "manual_login", False)
+        context = p.chromium.launch_persistent_context(user_data_dir, headless=headless)
+        page = context.pages[0] if context.pages else context.new_page()
+        return context, page, (lambda: context.close()), True
+
+    if storage_state:
+        browser = p.chromium.launch(headless=not args.headed)
+        context = browser.new_context(storage_state=storage_state)
+        page = context.new_page()
+        return context, page, (lambda: (context.close(), browser.close())), True
+
+    browser = p.chromium.launch(headless=not args.headed)
+    context = browser.new_context()
+    page = context.new_page()
+    return context, page, (lambda: (context.close(), browser.close())), False
+
+
+def authenticate(page, cfg: dict, args, base_url: str, settle: float, reused: bool) -> None:
+    """Establish an authenticated session on `page`.
+
+    - Session-reuse mode + --manual-login: open base_url in the visible window and
+      wait for you to log in by hand, then continue. Nothing is typed for you and
+      no password is read from config.
+    - Session-reuse mode without --manual-login: assume the profile/storage-state
+      is already logged in; do nothing.
+    - Credentialed mode: run the scripted test_login flow.
+    """
+    if reused:
+        if getattr(args, "manual_login", False):
+            try:
+                page.goto(base_url, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"[warn] could not open {base_url} for manual login: {e}")
+            input(
+                f"\n[manual-login] A browser window is open at {base_url}.\n"
+                f"  Sign in there as your own test/owner account, then press Enter\n"
+                f"  here to continue (nothing is typed for you)... "
+            )
+            page.wait_for_timeout(int(settle * 1000))
+        else:
+            print("[session] reusing existing logged-in session (no credentials used)")
+        return
+    do_login(page, cfg, base_url, settle)
+
+
+# ---------------------------------------------------------------------------
 # Post-crawl mode: discover everyone who interacted with ONE post, then check
 # each of their profiles for privacy-setting enforcement (value-blind).
 # ---------------------------------------------------------------------------
@@ -481,13 +556,11 @@ def run_post_crawl(cfg: dict, base_url: str, post_url: str, args) -> list[Findin
     full_post = urljoin(base_url, post_url)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.headed)
-        context = browser.new_context()
-        page = context.new_page()
+        context, page, cleanup, reused = open_session(p, cfg, args)
         capture = NetworkCapture(max_bytes=cfg.get("max_response_bytes", 2_000_000))
         capture.attach(page)
 
-        do_login(page, cfg, base_url, settle)
+        authenticate(page, cfg, args, base_url, settle, reused)
         resolver = PrivacyResolver(cfg, context, base_url)
 
         # 1) Load the post and discover interactors.
@@ -497,7 +570,7 @@ def run_post_crawl(cfg: dict, base_url: str, post_url: str, args) -> list[Findin
             page.goto(full_post, wait_until="domcontentloaded")
         except Exception as e:
             print(f"[abort] could not load post {full_post}: {e}")
-            context.close(); browser.close()
+            cleanup()
             return findings
         page.wait_for_timeout(int(settle * 1000))
         interactors = discover_interactors(page, cfg, base_url, settle)
@@ -520,7 +593,7 @@ def run_post_crawl(cfg: dict, base_url: str, post_url: str, args) -> list[Findin
 
         if args.list_only:
             print("[list-only] stopping before visiting profiles.")
-            context.close(); browser.close()
+            cleanup()
             return findings
 
         # 2) Visit each discovered profile and check exposure (value-blind).
@@ -552,8 +625,7 @@ def run_post_crawl(cfg: dict, base_url: str, post_url: str, args) -> list[Findin
 
             time.sleep(delay)
 
-        context.close()
-        browser.close()
+        cleanup()
 
     return findings
 
@@ -576,10 +648,20 @@ def build_plan(cfg: dict) -> list[PlannedCheck]:
     return plan
 
 
-def print_dry_run(cfg: dict, base_url: str, plan: list[PlannedCheck]) -> None:
+def _auth_description(cfg: dict, args) -> str:
+    user_data_dir, storage_state = _session_settings(cfg, args)
+    if user_data_dir:
+        how = "manual sign-in" if getattr(args, "manual_login", False) else "already logged in"
+        return f"reuse persistent profile {user_data_dir!r} ({how}); no credentials used"
+    if storage_state:
+        return f"reuse saved session {storage_state!r}; no credentials used"
+    return f"scripted login as {(cfg.get('test_login') or {}).get('username', '(none)')}"
+
+
+def print_dry_run(cfg: dict, base_url: str, plan: list[PlannedCheck], args) -> None:
     print("=== DRY RUN — no requests will be made ===")
     print(f"base_url: {base_url}")
-    print(f"login as: {(cfg.get('test_login') or {}).get('username', '(none)')}")
+    print(f"auth: {_auth_description(cfg, args)}")
     print(f"admin privacy endpoint: {cfg.get('admin_privacy_endpoint', '(none — using config users map)')}")
     print(f"targets ({len(plan)}), visited in this exact order, NOTHING else:")
     for i, pc in enumerate(plan, 1):
@@ -621,13 +703,11 @@ def run_live(cfg: dict, base_url: str, plan: list[PlannedCheck], args) -> list[F
     findings: list[Finding] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.headed)
-        context = browser.new_context()
-        page = context.new_page()
+        context, page, cleanup, reused = open_session(p, cfg, args)
         capture = NetworkCapture(max_bytes=cfg.get("max_response_bytes", 2_000_000))
         capture.attach(page)
 
-        do_login(page, cfg, base_url, settle)
+        authenticate(page, cfg, args, base_url, settle, reused)
         resolver = PrivacyResolver(cfg, context, base_url)
 
         for idx, pc in enumerate(plan):
@@ -667,8 +747,7 @@ def run_live(cfg: dict, base_url: str, plan: list[PlannedCheck], args) -> list[F
 
             time.sleep(delay)
 
-        context.close()
-        browser.close()
+        cleanup()
 
     return findings
 
@@ -767,6 +846,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="print the plan; make NO requests")
     parser.add_argument("--headed", action="store_true",
                         help="run the browser headed (default: headless)")
+    parser.add_argument("--user-data-dir", metavar="DIR", default=None,
+                        help="reuse a persistent Chrome profile at DIR instead of a scripted "
+                             "login. Log in once yourself (see --manual-login); the session is "
+                             "reused on later runs. No password is stored anywhere.")
+    parser.add_argument("--storage-state", metavar="FILE", default=None,
+                        help="reuse cookies/localStorage exported from an already-logged-in "
+                             "session (Playwright storage_state JSON). No password is used.")
+    parser.add_argument("--manual-login", action="store_true",
+                        help="session-reuse modes: open base_url in a visible window and wait "
+                             "for you to log in by hand, then continue (implies headed).")
     parser.add_argument("--post", metavar="URL",
                         help="explicit post-crawl seed (same as passing the URL positionally)")
     parser.add_argument("--targets-file", action="store_true",
@@ -807,7 +896,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("=== DRY RUN — no requests will be made ===")
             print(f"base_url: {base_url}")
             print(f"post-crawl seed: {urljoin(base_url + '/', post_url)}")
-            print("plan: log in -> open likes+comments -> discover interacting users -> "
+            print(f"auth: {_auth_description(cfg, args)}")
+            print("plan: authenticate -> open likes+comments -> discover interacting users -> "
                   "visit each profile -> check email/phone exposure vs privacy setting")
             print("output is value-blind: which field/endpoint was exposed, never the value.")
             print("=== end dry run ===")
@@ -819,7 +909,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     plan = build_plan(cfg)
 
     if args.dry_run:
-        print_dry_run(cfg, base_url, plan)
+        print_dry_run(cfg, base_url, plan, args)
         return 0
 
     findings = run_live(cfg, base_url, plan, args)
