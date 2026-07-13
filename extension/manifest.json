@@ -5,7 +5,9 @@
   "description": "Extract emails and phone numbers from post interactors (likes and comments) on social platforms. For personal privacy auditing only.",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.facebook.com/*",

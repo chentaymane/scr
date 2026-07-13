@@ -6,7 +6,19 @@
 // Results are persisted to chrome.storage so closing the popup doesn't lose
 // them. Settings persist across sessions.
 
-const PLATFORM_NAMES = {
+const PLATFORM_SCRIPTS = {
+  'facebook.com': ['platforms/utils.js', 'platforms/facebook.js'],
+  'instagram.com': ['platforms/utils.js', 'platforms/instagram.js'],
+  'twitter.com':  ['platforms/utils.js', 'platforms/twitter.js'],
+  'x.com':        ['platforms/utils.js', 'platforms/twitter.js'],
+  'pinterest.com':['platforms/utils.js', 'platforms/pinterest.js'],
+  'quora.com':    ['platforms/utils.js', 'platforms/quora.js'],
+  'tiktok.com':   ['platforms/utils.js', 'platforms/tiktok.js'],
+  'reddit.com':   ['platforms/utils.js', 'platforms/reddit.js'],
+  'linkedin.com': ['platforms/utils.js', 'platforms/linkedin.js'],
+};
+
+const PLATFORM_DISPLAY = {
   'facebook.com': 'Facebook',
   'instagram.com': 'Instagram',
   'pinterest.com': 'Pinterest',
@@ -50,13 +62,17 @@ function handleMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
     case 'platformDetected':
-      // Content scripts identify themselves; this is informational only.
       break;
     case 'scanProgress':
       updateProgress(msg.done, msg.total, msg.label);
       break;
     case 'scanResult':
-      handleNewUser(msg.data);
+      // Background sends { type: 'scanResult', user: {...} }
+      handleNewUser(msg.user || msg.data);
+      break;
+    case 'collectionDone':
+      // Content script finished collecting profile URLs
+      setStatus('running', `Collected ${msg.total} profiles — visiting profiles…`);
       break;
     case 'scanComplete':
       finishScan(msg.total || state.users.length);
@@ -76,10 +92,23 @@ function detectPlatform(url) {
   try { hostname = new URL(url).hostname.replace(/^www\./, ''); }
   catch { el.textContent = 'Not a valid URL'; return; }
   let matched = null;
-  for (const [domain, name] of Object.entries(PLATFORM_NAMES)) {
+  for (const [domain, name] of Object.entries(PLATFORM_DISPLAY)) {
     if (hostname === domain || hostname.endsWith('.' + domain)) { matched = name; break; }
   }
   el.textContent = matched ? `Platform: ${matched}` : 'Unknown platform';
+}
+
+function getHostname(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
+}
+
+function getScriptsForUrl(url) {
+  const host = getHostname(url);
+  if (!host) return null;
+  for (const [domain, scripts] of Object.entries(PLATFORM_SCRIPTS)) {
+    if (host === domain || host.endsWith('.' + domain)) return scripts;
+  }
+  return null;
 }
 
 // ─── Settings persistence ────────────────────────────────────────────────────
@@ -111,8 +140,8 @@ function clampInt(v, lo, hi, fallback) {
 
 async function onScanClick() {
   if (state.loading) {
-    // Cancel in-flight scan
     try { chrome.tabs.sendMessage(currentTabId, { type: 'cancelScan' }); } catch { /* ignore */ }
+    try { chrome.runtime.sendMessage({ type: 'cancelVisit' }); } catch { /* ignore */ }
     setLoading(false);
     setStatus('ready', 'Cancelled');
     return;
@@ -135,13 +164,49 @@ async function onScanClick() {
   const maxComments  = clampInt(document.getElementById('max-comments').value, 1, 2000, 200);
   const maxNestDepth = clampInt(document.getElementById('max-depth').value,    1,   20,   5);
 
+  // Get the current tab URL to determine which scripts to inject
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch { /* ignore */ }
+  if (!tab || !tab.url) {
+    setError('Cannot read the current tab');
+    setLoading(false);
+    return;
+  }
+
+  const scripts = getScriptsForUrl(tab.url);
+  if (!scripts) {
+    setError('Not a supported platform. Open a post on Facebook, Instagram, X, TikTok, Reddit, LinkedIn, Pinterest, or Quora.');
+    setLoading(false);
+    return;
+  }
+
+  // Force-inject content scripts so the extension works even if the page
+  // was opened before the extension was installed.
+  try {
+    for (const jsFile of scripts) {
+      await chrome.scripting.executeScript({
+        target: { tabId: currentTabId },
+        files: [jsFile],
+      });
+    }
+  } catch (err) {
+    setError('Cannot inject scripts into this page. Make sure you are on a supported platform.');
+    setLoading(false);
+    return;
+  }
+
+  // Small delay to let the injected scripts register their listeners
+  await new Promise(r => setTimeout(r, 200));
+
   try {
     await chrome.tabs.sendMessage(currentTabId, {
       type: 'startScan',
       maxLikers, maxComments, maxNestDepth,
     });
   } catch (err) {
-    setError('Could not reach the page. Make sure you\'re on a supported platform and reload it.');
+    setError('Content script failed to start. Reload the page and try again.');
     setLoading(false);
   }
 }

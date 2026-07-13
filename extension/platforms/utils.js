@@ -7,11 +7,7 @@
 // re-initialise.
 
 // ─── PII patterns ───────────────────────────────────────────────────────────
-// NOTE: do NOT use the /g flag here — sharing a single stateful regex across
-// many call sites is a footgun. Each caller creates its own instance.
 const EMAIL_RE_SRC = '[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}';
-// Phone with optional opening "(" (e.g. "(415) 555-0123") or "+" (e.g. "+1 415 555 0123").
-// Length 7–15 digits (E.164 max) to suppress false positives on ids/counts.
 const PHONE_RE_SRC = '(?<!\\d)(\\+\\d[\\d\\s().\\-]{7,}\\d|\\(\\d{3}\\)\\s?\\d{3}[\\s.-]?\\d{4}|\\d{3}[\\s.-]?\\d{3}[\\s.-]?\\d{4})(?!\\d)';
 
 function findEmails(text) {
@@ -58,46 +54,10 @@ function clearSeenUsers() {
   _state.seen.clear();
 }
 
-// ─── Contact extraction from a DOM element ─────────────────────────────────
-
-function extractContactsFromElement(el) {
-  const result = { emails: [], phones: [] };
-  if (!el) return result;
-
-  // Pull text once; innerText triggers a layout, but for the small subtrees
-  // we look at it's fine.
-  let text = '';
-  try { text = el.innerText || ''; } catch { text = ''; }
-
-  result.emails = findEmails(text);
-
-  // mailto: links
-  try {
-    for (const a of el.querySelectorAll('a[href^="mailto:"]')) {
-      const href = (a.getAttribute('href') || '').replace(/^mailto:/i, '').split('?')[0].trim();
-      if (href && !result.emails.includes(href.toLowerCase())) {
-        result.emails.push(href.toLowerCase());
-      }
-    }
-  } catch { /* querySelectorAll may throw on detached elements */ }
-
-  result.phones = findPhones(text);
-
-  // tel: links
-  try {
-    for (const a of el.querySelectorAll('a[href^="tel:"]')) {
-      const href = (a.getAttribute('href') || '').replace(/^tel:/i, '').trim();
-      if (href && !result.phones.includes(href)) result.phones.push(href);
-    }
-  } catch { /* ignore */ }
-
-  return result;
-}
-
 // ─── Profile URL extraction ─────────────────────────────────────────────────
 
 function extractProfileUrls(container, selectors) {
-  const urls = new Set();
+  const urls = new Map(); // url -> { name, username }
   if (!container) return [];
   const hostname = window.location.hostname;
   for (const sel of selectors) {
@@ -112,19 +72,19 @@ function extractProfileUrls(container, selectors) {
         const parsed = new URL(full);
         if (parsed.hostname !== hostname && !parsed.hostname.endsWith('.' + hostname)) continue;
       } catch { continue; }
-      urls.add(full);
+      // Try to get a display name from the element
+      const name = (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '').trim();
+      if (!urls.has(full)) urls.set(full, { name: name.substring(0, 100) });
     }
   }
-  return [...urls];
+  return [...urls.entries()].map(([url, info]) => ({ url, ...info }));
 }
 
 // ─── Click & scroll helpers ─────────────────────────────────────────────────
 
 function clickElement(el) {
   if (!el) return false;
-  try {
-    el.scrollIntoView({ block: 'center' });
-  } catch { /* some elements are not scrollable */ }
+  try { el.scrollIntoView({ block: 'center' }); } catch { /* some elements are not scrollable */ }
   try {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
   } catch (e) {
@@ -142,8 +102,6 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// Scroll a container repeatedly until its scrollHeight stops growing or
-// `maxScrolls` is reached. Returns when the list looks stable.
 async function scrollUntilStable(el, { maxScrolls = 10, interval = 400 } = {}) {
   if (!el) return;
   for (let i = 0; i < maxScrolls; i++) {
@@ -160,7 +118,7 @@ function sendResult(user) {
   if (!user) return;
   if (!isNewUser(user.profileUrl, user.username)) return;
   try {
-    chrome.runtime.sendMessage({ type: 'scanResult', data: user }, () => void chrome.runtime.lastError);
+    chrome.runtime.sendMessage({ type: 'scanResult', user }, () => void chrome.runtime.lastError);
   } catch { /* popup closed */ }
 }
 
@@ -184,90 +142,39 @@ function sendError(message) {
   } catch { /* ignore */ }
 }
 
-// ─── Profile visiting (fetch profile pages to extract contacts) ────────────
+// ─── Request profile visits from background ─────────────────────────────────
+// Instead of fetching profiles from the content script (which can't render SPAs),
+// we send the list of profiles to the background service worker. The background
+// opens each profile in a real tab, waits for it to load, injects a script to
+// extract emails/phones from the rendered DOM, then closes the tab.
 
-async function visitProfiles(profiles, { platform, onProgress, shouldCancel } = {}) {
-  for (let i = 0; i < profiles.length; i++) {
-    if (shouldCancel && shouldCancel()) break;
-    const p = profiles[i];
-    if (onProgress) onProgress(i + 1, profiles.length);
-    try {
-      const resp = await fetch(p.profileUrl, {
-        credentials: 'include',
-        headers: { 'Accept': 'text/html,application/xhtml+xml' },
-      });
-      if (!resp.ok) continue;
-      const html = await resp.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      if (!doc.body) continue;
-
-      const contacts = extractContactsFromElement(doc.body);
-
-      // Also scan meta tags and JSON-LD for contact info.
-      const metaContacts = extractContactsFromMeta(doc);
-      const emails = [...new Set([...contacts.emails, ...metaContacts.emails])];
-      const phones = [...new Set([...contacts.phones, ...metaContacts.phones])];
-
-      sendResult({
-        name: p.name || p.username || 'Unknown',
-        username: p.username,
-        email: emails[0] || null,
-        phone: phones[0] || null,
-        profileUrl: p.profileUrl,
-        platform,
-        source: p.source,
-      });
-    } catch { /* ignore fetch/parse errors */ }
+function requestProfileVisits(profiles, platform) {
+  if (!profiles || profiles.length === 0) return;
+  // Deduplicate by URL
+  const seen = new Set();
+  const unique = [];
+  for (const p of profiles) {
+    const key = (p.url || p.profileUrl || '').toLowerCase().replace(/\/+$/, '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push({
+      profileUrl: p.url || p.profileUrl,
+      username: p.username || '',
+      name: p.name || '',
+      platform: platform || '',
+    });
   }
+  if (unique.length === 0) return;
+  try {
+    chrome.runtime.sendMessage({ type: 'visitProfiles', profiles: unique }, () => void chrome.runtime.lastError);
+  } catch { /* ignore */ }
 }
 
-function extractContactsFromMeta(doc) {
-  const result = { emails: [], phones: [] };
-  if (!doc) return result;
-
-  // Meta tags
-  for (const meta of doc.querySelectorAll('meta')) {
-    const content = meta.getAttribute('content') || '';
-    const attr = (meta.getAttribute('name') || meta.getAttribute('property') || '').toLowerCase();
-    if (attr.includes('email') || attr.includes('contact')) {
-      result.emails.push(...findEmails(content));
-    }
-    if (attr.includes('phone') || attr.includes('tel')) {
-      result.phones.push(...findPhones(content));
-    }
-  }
-
-  // mailto: / tel: links
-  for (const a of doc.querySelectorAll('a[href^="mailto:"]')) {
-    const href = (a.getAttribute('href') || '').replace(/^mailto:/i, '').split('?')[0].trim();
-    if (href) result.emails.push(href.toLowerCase());
-  }
-  for (const a of doc.querySelectorAll('a[href^="tel:"]')) {
-    const href = (a.getAttribute('href') || '').replace(/^tel:/i, '').trim();
-    if (href) result.phones.push(href);
-  }
-
-  // JSON-LD structured data
-  for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
-    try { walkJsonLd(JSON.parse(script.textContent), result); } catch { /* ignore */ }
-  }
-
-  result.emails = [...new Set(result.emails)];
-  result.phones = [...new Set(result.phones)];
-  return result;
-}
-
-function walkJsonLd(node, out) {
-  if (!node) return;
-  if (Array.isArray(node)) { node.forEach(n => walkJsonLd(n, out)); return; }
-  if (typeof node !== 'object') return;
-  for (const [k, v] of Object.entries(node)) {
-    const key = k.toLowerCase();
-    if (key === 'email' && typeof v === 'string') out.emails.push(...findEmails(v));
-    if ((key === 'phone' || key === 'telephone') && typeof v === 'string') out.phones.push(...findPhones(v));
-    if (typeof v === 'object') walkJsonLd(v, out);
-  }
+// ─── Notify popup that all profiles have been collected ─────────────────────
+function sendCollectionDone(total) {
+  try {
+    chrome.runtime.sendMessage({ type: 'collectionDone', total }, () => void chrome.runtime.lastError);
+  } catch { /* ignore */ }
 }
 
 // Expose helpers to the platform scripts.
@@ -275,8 +182,8 @@ globalThis.SCE = {
   EMAIL_RE_SRC, PHONE_RE_SRC,
   findEmails, findPhones,
   isNewUser, clearSeenUsers,
-  extractContactsFromElement, extractProfileUrls,
+  extractProfileUrls,
   clickElement, scrollToBottom, scrollUntilStable, sleep,
   sendResult, sendProgress, sendComplete, sendError,
-  visitProfiles,
+  requestProfileVisits, sendCollectionDone,
 };

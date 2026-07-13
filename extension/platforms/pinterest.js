@@ -12,8 +12,8 @@
   'use strict';
 
   const { clickElement, scrollUntilStable, sleep,
-          extractContactsFromElement, sendResult, sendProgress, sendComplete, sendError,
-          visitProfiles } = globalThis.SCE;
+          sendResult, sendProgress, sendComplete, sendError,
+          requestProfileVisits, sendCollectionDone } = globalThis.SCE;
 
   let cancelled = false;
 
@@ -39,15 +39,11 @@
       const commenterProfiles = await collectCommenterProfiles(maxComments);
       const allProfiles = [...likerProfiles, ...commenterProfiles];
 
-      sendProgress(40, 100, `Visiting ${allProfiles.length} profiles…`);
-      await visitProfiles(allProfiles, {
-        platform: 'Pinterest',
-        onProgress: (done, total) => sendProgress(40 + Math.round((done / total) * 55), 95, `Visiting profile ${done}/${total}…`),
-        shouldCancel: () => cancelled,
-      });
+      sendProgress(40, 100, `Sending ${allProfiles.length} profiles for visiting…`);
+      requestProfileVisits(allProfiles, 'Pinterest');
 
-      sendProgress(100, 100, `Done — visited ${allProfiles.length} profiles`);
-      sendComplete(allProfiles.length);
+      sendProgress(100, 100, `Collected ${allProfiles.length} profiles — visiting in background`);
+      sendCollectionDone(allProfiles.length);
     } catch (err) {
       sendError(err && err.message || String(err));
     }
