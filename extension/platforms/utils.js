@@ -6,7 +6,7 @@
 // on a single shared object, not on module-level `let`s that scripts cannot
 // re-initialise.
 
-// ─── PII patterns ───────────────────────────────────────────────────────────
+// ─── PII patterns ────────────────────────────────────────────────────────────
 const EMAIL_RE_SRC = '[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}';
 const PHONE_RE_SRC = '(?<!\\d)(\\+\\d[\\d\\s().\\-]{7,}\\d|\\(\\d{3}\\)\\s?\\d{3}[\\s.-]?\\d{4}|\\d{3}[\\s.-]?\\d{3}[\\s.-]?\\d{4})(?!\\d)';
 
@@ -28,13 +28,17 @@ function findPhones(text) {
   while ((m = re.exec(text)) !== null) {
     const digits = m[0].replace(/\D/g, '');
     if (digits.length < 7 || digits.length > 15) continue;
+    if (/^(\d)\1+$/.test(digits)) continue;
+    if (/^(19|20)\d{6,}$/.test(digits)) continue;
+    if (/^\d{1,5}$/.test(digits)) continue;
+    if (digits.length >= 13 && !m[0].trim().startsWith('+')) continue;
     const trimmed = m[0].trim();
     if (!seen.has(trimmed)) { seen.add(trimmed); out.push(trimmed); }
   }
   return out;
 }
 
-// ─── De-duplication (per content-script lifetime) ───────────────────────────
+// ─── De-duplication (per content-script lifetime) ────────────────────────────
 
 const _state = globalThis.__sceState || (globalThis.__sceState = { seen: new Set() });
 
@@ -72,7 +76,6 @@ function extractProfileUrls(container, selectors) {
         const parsed = new URL(full);
         if (parsed.hostname !== hostname && !parsed.hostname.endsWith('.' + hostname)) continue;
       } catch { continue; }
-      // Try to get a display name from the element
       const name = (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '').trim();
       if (!urls.has(full)) urls.set(full, { name: name.substring(0, 100) });
     }
@@ -112,7 +115,12 @@ async function scrollUntilStable(el, { maxScrolls = 10, interval = 400 } = {}) {
   }
 }
 
-// ─── Messaging back to the popup ────────────────────────────────────────────
+// ─── Messaging back to the popup ─────────────────────────────────────────────
+
+// IMPORTANT: when the content script sends collected profile URLs to the
+// background, each profile MUST carry a `source` field so the popup can group
+// results as Likers / Commenters / Other. The previous version of the
+// background dropped this field — the new version preserves it.
 
 function sendResult(user) {
   if (!user) return;
@@ -124,7 +132,14 @@ function sendResult(user) {
 
 function sendProgress(done, total, label) {
   try {
-    chrome.runtime.sendMessage({ type: 'scanProgress', done, total, label }, () => void chrome.runtime.lastError);
+    chrome.runtime.sendMessage({
+      type: 'scanProgress',
+      // Match what the popup expects (see popup.js handleMessage). The
+      // background's *profile-visit* progress uses the same shape.
+      current: done,
+      total,
+      detail: label,
+    }, () => void chrome.runtime.lastError);
   } catch { /* ignore */ }
 }
 
@@ -132,25 +147,39 @@ function sendComplete(total) {
   clearSeenUsers();
   try {
     chrome.runtime.sendMessage({ type: 'scanComplete', total }, () => void chrome.runtime.lastError);
-  } catch { /* ignore */ }
+  } catch { /* popup closed */ }
 }
 
 function sendError(message) {
   clearSeenUsers();
   try {
     chrome.runtime.sendMessage({ type: 'scanError', message: String(message || 'Unknown error') }, () => void chrome.runtime.lastError);
-  } catch { /* ignore */ }
+  } catch { /* popup closed */ }
+}
+
+// ─── Platform detection helpers ──────────────────────────────────────────────
+
+// Heuristic: are we on a *post* page (not home / search / profile)? Each
+// platform can override; the default checks for the typical post URL shape.
+function looksLikePostUrl(url) {
+  if (!url) return false;
+  const path = (() => { try { return new URL(url).pathname; } catch { return ''; } })();
+  if (!path) return false;
+  // Generic marker: a path segment longer than 12 chars that isn't a top-nav
+  // section. Each platform script can replace this with a stricter test.
+  return path.length > 1 && path.split('/').filter(Boolean).length >= 1;
 }
 
 // ─── Request profile visits from background ─────────────────────────────────
-// Instead of fetching profiles from the content script (which can't render SPAs),
-// we send the list of profiles to the background service worker. The background
-// opens each profile in a real tab, waits for it to load, injects a script to
-// extract emails/phones from the rendered DOM, then closes the tab.
+//
+// Instead of fetching profiles from the content script (which can't render
+// SPAs), we send the list of profiles to the background service worker.
+// The background opens each profile in a real tab, deep-extracts contacts
+// from the rendered DOM, follows link-in-bio one level deep, and streams
+// results back.
 
 function requestProfileVisits(profiles, platform) {
   if (!profiles || profiles.length === 0) return;
-  // Deduplicate by URL
   const seen = new Set();
   const unique = [];
   for (const p of profiles) {
@@ -162,19 +191,46 @@ function requestProfileVisits(profiles, platform) {
       username: p.username || '',
       name: p.name || '',
       platform: platform || '',
+      // CRITICAL: preserve the source tag (liker / commenter / other) so the
+      // background can pass it through to the popup grouping.
+      source: p.source || 'other',
     });
   }
   if (unique.length === 0) return;
+  // Read the latest parallel setting from storage so the popup's slider
+  // takes effect without needing us to re-thread it through startScan.
+  let parallel = 4;
   try {
-    chrome.runtime.sendMessage({ type: 'visitProfiles', profiles: unique }, () => void chrome.runtime.lastError);
+    chrome.storage.local.get(['maxParallel'], (s) => {
+      const p = parseInt(s && s.maxParallel, 10);
+      if (!Number.isNaN(p) && p >= 1 && p <= 8) parallel = p;
+      sendVisitRequest(unique, parallel);
+    });
+  } catch {
+    sendVisitRequest(unique, parallel);
+  }
+}
+
+function sendVisitRequest(unique, parallel) {
+  try {
+    chrome.runtime.sendMessage({
+      type: 'visitProfiles',
+      profiles: unique,
+      parallel,
+    }, () => void chrome.runtime.lastError);
   } catch { /* ignore */ }
 }
 
-// ─── Notify popup that all profiles have been collected ─────────────────────
 function sendCollectionDone(total) {
   try {
     chrome.runtime.sendMessage({ type: 'collectionDone', total }, () => void chrome.runtime.lastError);
-  } catch { /* ignore */ }
+  } catch { /* popup closed */ }
+}
+
+function sendStarted(total) {
+  try {
+    chrome.runtime.sendMessage({ type: 'scanStarted', total }, () => void chrome.runtime.lastError);
+  } catch { /* popup closed */ }
 }
 
 // Expose helpers to the platform scripts.
@@ -185,5 +241,7 @@ globalThis.SCE = {
   extractProfileUrls,
   clickElement, scrollToBottom, scrollUntilStable, sleep,
   sendResult, sendProgress, sendComplete, sendError,
+  sendStarted,
   requestProfileVisits, sendCollectionDone,
+  looksLikePostUrl,
 };

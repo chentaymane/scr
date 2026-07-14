@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Social Contact Extractor",
-  "version": "1.0.0",
-  "description": "Extract emails and phone numbers from post interactors (likes and comments) on social platforms. For personal privacy auditing only.",
+  "version": "1.1.0",
+  "description": "Deep-extract emails, phones, bios, websites, link-in-bio contacts, and social handles from post interactors (likes and comments) across 8 social platforms. For personal privacy auditing only.",
   "permissions": [
     "activeTab",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "alarms"
   ],
   "host_permissions": [
     "https://*.facebook.com/*",
@@ -18,7 +19,32 @@
     "https://*.x.com/*",
     "https://*.tiktok.com/*",
     "https://*.reddit.com/*",
-    "https://*.linkedin.com/*"
+    "https://*.linkedin.com/*",
+    "https://linktr.ee/*",
+    "https://*.linktr.ee/*",
+    "https://allmylinks.com/*",
+    "https://beacons.ai/*",
+    "https://about.me/*",
+    "https://carrd.co/*",
+    "https://bio.link/*",
+    "https://hey.link/*",
+    "https://lnk.bio/*",
+    "https://taplink.cc/*",
+    "https://withkoji.com/*",
+    "https://stan.store/*",
+    "https://komi.io/*",
+    "https://linkpop.com/*",
+    "https://shorturl.com/*",
+    "https://lnkfi.re/*",
+    "https://snipfeed.co/*",
+    "https://directme.link/*",
+    "https://bento.me/*",
+    "https://popl.co/*",
+    "https://interact.me/*",
+    "https://link.bio/*",
+    "https://heyyo.io/*",
+    "https://mylink.page/*",
+    "https://flowpage.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

@@ -8,7 +8,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 420px;
+      width: 440px;
       min-height: 320px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #1a1a2e;
@@ -56,25 +56,14 @@
     .controls button:hover:not(:disabled) { opacity: 0.85; }
     .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    .btn-primary {
-      background: #667eea;
-      color: white;
-    }
-
-    .btn-secondary {
-      background: #2a2a4a;
-      color: #e0e0e0;
-    }
-
-    .btn-danger {
-      background: #e74c3c;
-      color: white;
-    }
+    .btn-primary { background: #667eea; color: white; }
+    .btn-secondary { background: #2a2a4a; color: #e0e0e0; }
+    .btn-danger { background: #e74c3c; color: white; }
 
     .settings {
       padding: 10px 16px;
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
       gap: 10px;
       background: #16162a;
       border-bottom: 1px solid #2a2a4a;
@@ -104,10 +93,28 @@
       font-family: inherit;
     }
 
-    .setting input:focus {
-      outline: none;
-      border-color: #667eea;
+    .setting input:focus { outline: none; border-color: #667eea; }
+
+    .check-setting {
+      padding: 8px 16px;
+      background: #16162a;
+      border-bottom: 1px solid #2a2a4a;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
     }
+
+    .check-setting label {
+      font-size: 11px;
+      color: #aaa;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .check-setting input { cursor: pointer; }
 
     .status-bar {
       padding: 8px 16px;
@@ -132,13 +139,10 @@
     .status-dot.error { background: #e74c3c; }
     .status-dot.done { background: #3498db; }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
     .results {
-      max-height: 380px;
+      max-height: 420px;
       overflow-y: auto;
     }
 
@@ -159,6 +163,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      z-index: 1;
     }
 
     .section-count {
@@ -175,24 +180,33 @@
       transition: background 0.15s;
     }
 
-    .contact-card:hover {
-      background: #1f1f38;
-    }
+    .contact-card:hover { background: #1f1f38; }
 
-    .contact-name {
-      font-weight: 500;
-      color: #e0e0e0;
-      margin-bottom: 4px;
+    .contact-row {
       display: flex;
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
     }
 
+    .contact-name {
+      font-weight: 500;
+      color: #e0e0e0;
+    }
+
     .contact-name .at {
       color: #888;
       font-weight: 400;
       font-size: 11px;
+    }
+
+    .contact-source {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.06);
+      color: #aaa;
+      text-transform: uppercase;
     }
 
     .platform-badge {
@@ -209,7 +223,7 @@
     .platform-twitter .platform-badge { background: #1DA1F2; }
     .platform-pinterest .platform-badge { background: #bd081c; }
     .platform-quora .platform-badge { background: #b92b27; }
-    .platform-tiktok .platform-badge { background: #010101; }
+    .platform-tiktok .platform-badge { background: #010101; border: 1px solid #444; }
     .platform-reddit .platform-badge { background: #ff4500; }
     .platform-linkedin .platform-badge { background: #0077b5; }
 
@@ -217,6 +231,7 @@
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
+      margin-top: 6px;
     }
 
     .contact-link {
@@ -226,27 +241,76 @@
       text-decoration: none;
     }
 
-    .contact-link.email {
-      background: rgba(52, 152, 219, 0.2);
-      color: #3498db;
+    .contact-link.email { background: rgba(52, 152, 219, 0.2); color: #3498db; }
+    .contact-link.phone { background: rgba(39, 174, 96, 0.2); color: #27ae60; }
+    .contact-link.website { background: rgba(241, 196, 15, 0.18); color: #f1c40f; }
+    .contact-link.linkinbio { background: rgba(155, 89, 182, 0.2); color: #9b59b6; }
+    .contact-link.social { background: rgba(102, 126, 234, 0.15); color: #8a99f0; }
+    .contact-link.profile { background: rgba(102, 126, 234, 0.15); color: #667eea; }
+
+    .contact-extras {
+      margin-top: 8px;
+      display: none;
     }
 
-    .contact-link.phone {
-      background: rgba(39, 174, 96, 0.2);
-      color: #27ae60;
+    .contact-card.expanded .contact-extras { display: block; }
+
+    .extras-section {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: rgba(0,0,0,0.18);
+      border-radius: 4px;
     }
 
-    .contact-link.profile {
-      background: rgba(102, 126, 234, 0.15);
+    .extras-section-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 4px;
+    }
+
+    .bio-text {
+      font-size: 11px;
+      color: #ccc;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .follow-flag {
+      font-size: 10px;
+      color: #9b59b6;
+      margin-left: 4px;
+    }
+
+    .expand-btn {
+      background: none;
+      border: none;
       color: #667eea;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 4px 0;
+      margin-top: 4px;
+      font-family: inherit;
     }
+
+    .expand-btn:hover { text-decoration: underline; }
 
     .footer {
       padding: 8px 16px;
       font-size: 10px;
-      color: #444;
+      color: #555;
       text-align: center;
       border-top: 1px solid #1f1f38;
+    }
+
+    .footer .stats {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 4px;
+      color: #888;
     }
 
     .progress-bar {
@@ -277,21 +341,20 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .empty-state {
-      padding: 24px 16px;
-      text-align: center;
-    }
+    .empty-state { padding: 24px 16px; text-align: center; }
+    .empty-state p { color: #666; margin-bottom: 12px; font-size: 12px; }
+    .empty-state p + p { margin-bottom: 0; color: #555; }
 
-    .empty-state p {
-      color: #666;
-      margin-bottom: 12px;
-      font-size: 12px;
+    .summary-bar {
+      padding: 6px 16px;
+      font-size: 11px;
+      background: #1d1d3a;
+      color: #aaa;
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid #2a2a4a;
     }
-
-    .empty-state p + p {
-      margin-bottom: 0;
-      color: #555;
-    }
+    .summary-bar strong { color: #e0e0e0; }
   </style>
 </head>
 <body>
@@ -322,6 +385,15 @@
       <label for="max-depth">Reply depth</label>
       <input type="number" id="max-depth" min="1" max="20" value="5">
     </div>
+    <div class="setting">
+      <label for="max-parallel">Parallel</label>
+      <input type="number" id="max-parallel" min="1" max="8" value="4">
+    </div>
+  </div>
+
+  <div class="check-setting">
+    <label><input type="checkbox" id="opt-follow-bio" checked> Follow link-in-bio (1 level)</label>
+    <label><input type="checkbox" id="opt-extract-bio" checked> Capture bio / website / socials</label>
   </div>
 
   <div class="progress-bar" id="progress-bar" style="display:none">
@@ -331,6 +403,13 @@
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text">Idle — open a post and click Start Scan</span>
+  </div>
+
+  <div class="summary-bar" id="summary-bar" style="display:none">
+    <span><strong id="sum-visited">0</strong> visited</span>
+    <span><strong id="sum-contacts">0</strong> with contacts</span>
+    <span><strong id="sum-emails">0</strong> emails</span>
+    <span><strong id="sum-phones">0</strong> phones</span>
   </div>
 
   <div class="results" id="results-container">
